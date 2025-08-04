@@ -1,14 +1,24 @@
 from datetime import time, datetime
-from telegram.ext import MessageHandler, filters, CallbackContext
 import plotly.graph_objs as go
 from translitua import translit, RussianSimple
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, Application
-from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes, ApplicationBuilder
 import matplotlib.pyplot as plt
 from io import BytesIO
 import aiohttp
 import os
 import sys
+
+# Правильні імпорти для telegram та telegram.ext
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import (
+    Application,
+    ApplicationBuilder,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+    CallbackContext
+)
 
 # 🔧 ОТРИМУЄМО API KEY ТА ТОКЕН ЗІ ЗМІННИХ СЕРЕДОВИЩА
 WEATHER_API_KEY = os.environ.get('WEATHER_API_KEY')
@@ -216,10 +226,10 @@ async def get_hourly_forecast_data(city, date_str, user_lang_code='uk'):
                     wind = hour_data['wind_kph']
 
                     hourly_forecasts.append(get_translated_text(user_lang_code, 'hourly_details',
-                                                                time=time_only_str,
-                                                                temp=temp,
-                                                                condition=condition,
-                                                                wind=wind))
+                                                                 time=time_only_str,
+                                                                 temp=temp,
+                                                                 condition=condition,
+                                                                 wind=wind))
                     hourly_temps.append(temp)
                     hourly_times.append(time_only_str)
 
@@ -370,9 +380,9 @@ async def handle_city_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
                                      caption=get_translated_text(user_lang_code, 'chart_humidity_caption'))
         interactive = generate_interactive_chart(dates, temps, humidities, user_lang_code)
         await context.bot.send_document(chat_id=query.message.chat.id, document=interactive,
-                                        filename=get_translated_text(user_lang_code,
+                                         filename=get_translated_text(user_lang_code,
                                                                       'chart_interactive_caption_filename'),
-                                        caption=get_translated_text(user_lang_code, 'chart_interactive_caption'))
+                                         caption=get_translated_text(user_lang_code, 'chart_interactive_caption'))
         keyboard = [
             [InlineKeyboardButton(get_translated_text(user_lang_code, 'hourly_weather_button'), callback_data=f'hourly_weather_{translit(city_data)}')],
             [InlineKeyboardButton(get_translated_text(user_lang_code, 'choose_city_button'), callback_data='manual')]
