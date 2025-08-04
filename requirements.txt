@@ -1,7 +1,7 @@
-python-telegram-bot==20.6
+python-telegram-bot==20.7 # Можна повернути 20.7 або залишити 20.6, спробуємо 20.7
 plotly
 matplotlib
 aiohttp
-uvicorn==0.23.2
+uvicorn
+gunicorn      # Heroku також використовує Gunicorn для запуску Uvicorn
 translitua
-gunicorn
