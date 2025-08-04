@@ -4,4 +4,5 @@ matplotlib
 aiohttp
 uvicorn
 translitua
+gunicorn
 
