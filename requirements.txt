@@ -1,4 +1,4 @@
-python-telegram-bot
+python-telegram-bot==20.7 # Or a more recent 20.x version
 plotly
 matplotlib
 aiohttp
