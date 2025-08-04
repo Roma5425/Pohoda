@@ -1,8 +1,7 @@
-python-telegram-bot==20.7
+python-telegram-bot==20.6 # Спробуємо 20.6 замість 20.7
 plotly
 matplotlib
 aiohttp
-uvicorn==0.23.2 # Конкретна версія, яка добре працює з PTB 20.x
+uvicorn==0.23.2 # Явно вказуємо версію uvicorn
 translitua
 gunicorn
-anyio==3.7.1 # Явно вказуємо сумісну версію
