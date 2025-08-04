@@ -1,43 +1,46 @@
 from datetime import time, datetime
+from telegram.ext import MessageHandler, filters, CallbackContext
 import plotly.graph_objs as go
 from translitua import translit, RussianSimple
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import CallbackQueryHandler
 import matplotlib.pyplot as plt
 from io import BytesIO
 import aiohttp
-import os
-import sys
-
-# Правильні імпорти для telegram та telegram.ext
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import (
+from telegram import (
     Application,
     ApplicationBuilder,
-    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
-    MessageHandler,
-    filters,
-    CallbackContext
+    filters
 )
-from fastapi import FastAPI, Request # <-- НОВИЙ ІМПОРТ
+import os
+import uvicorn
+import sys
+from fastapi import FastAPI # Import FastAPI for web serving
 
-# 🔧 ОТРИМУЄМО API KEY ТА ТОКЕН ЗІ ЗМІННИХ СЕРЕДОВИЩА
+# 🔧 GET API KEY AND TOKEN FROM ENVIRONMENT VARIABLES (REPLIT SECRETS / RENDER ENVIRONMENT)
+# Important: Make sure you add these variables in the "Environment" section on Render
 WEATHER_API_KEY = os.environ.get('WEATHER_API_KEY')
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
+# CHANGED: Get the port provided by Render.com. Render usually uses 10000.
+PORT = int(os.environ.get('PORT', 8080))
+# ADDED: Your Render service URL. It needs to be added as an environment variable on Render.
 WEBHOOK_URL = os.environ.get('WEBHOOK_URL')
 
-# Базова перевірка для обов'язкових змінних середовища для розгортання
+# Check if variables were successfully loaded (for console output during local run)
+# Added sys.exit(1) for critical missing variables to fail early in deployment setup.
 if not WEATHER_API_KEY:
-    print("Критична помилка: Змінна середовища 'WEATHER_API_KEY' не знайдена.")
+    print("Помилка: Змінна середовища 'WEATHER_API_KEY' не знайдена. Перевірте Render Environment.")
     sys.exit(1)
 if not BOT_TOKEN:
-    print("Критична помилка: Змінна середовища 'BOT_TOKEN' не знайдена.")
+    print("Помилка: Змінна середовища 'BOT_TOKEN' не знайдена. Перевірте Render Environment.")
     sys.exit(1)
 if not WEBHOOK_URL:
-    print("Критична помилка: Змінна середовища 'WEBHOOK_URL' не знайдена. Вона потрібна для Webhooks.")
+    print("Помилка: Змінна середовища 'WEBHOOK_URL' не знайдена. Вона потрібна для Webhooks. Перевірте Render Environment.")
     sys.exit(1)
 
-# --- Словник перекладів ---
+# --- Translation Dictionary --- (changed, new keys added)
 TRANSLATIONS = {
     'uk': {
         'initial_welcome': "👋 Привіт! Я ваш особистий метеоролог Weather Online Bot! 🌤️\n\nЯ допоможу тобі отримати детальний прогноз погоди на 7 днів для будь-якого міста світу, а також покажу зручні графіки температури та вологості.",
@@ -69,6 +72,7 @@ TRANSLATIONS = {
         'temp_legend': 'Температура (°C)',
         'humidity_legend': 'Вологість (%)',
         'chart_interactive_caption_filename': "Графік_погоди.html",
+        # --- NEW TRANSLATIONS FOR HOURLY WEATHER ---
         'hourly_weather_button': "Погодинна погода ⏰",
         'hourly_forecast_for': "Погодинний прогноз для *{location_name}*:",
         'hourly_details': "*{time}*: {temp}°C, {condition}, Вітер: {wind} км/год",
@@ -111,6 +115,7 @@ TRANSLATIONS = {
         'temp_legend': 'Temperature (°C)',
         'humidity_legend': 'Humidity (%)',
         'chart_interactive_caption_filename': "Weather_Chart.html",
+        # --- NEW TRANSLATIONS FOR HOURLY WEATHER ---
         'hourly_weather_button': "Hourly Weather ⏰",
         'hourly_forecast_for': "Hourly forecast for *{location_name}*:",
         'hourly_details': "*{time}*: {temp}°C, {condition}, Wind: {wind} km/h",
@@ -125,7 +130,7 @@ TRANSLATIONS = {
     }
 }
 
-# Мапування кодів мов Telegram на коди мов WeatherAPI
+# Mapping Telegram language codes to WeatherAPI language codes
 WEATHERAPI_LANG_MAP = {
     'uk': 'uk', 'en': 'en', 'ru': 'ru', 'pl': 'pl', 'es': 'es', 'fr': 'fr', 'de': 'de',
     'pt': 'pt', 'ja': 'ja', 'ko': 'ko', 'it': 'it', 'nl': 'nl', 'th': 'th', 'vi': 'vi',
@@ -133,10 +138,18 @@ WEATHERAPI_LANG_MAP = {
     'tl': 'tl', 'tr': 'tr', 'zh': 'zh', 'zh_TW': 'zh_TW'
 }
 
+
 def get_translated_text(user_language_code: str, key: str, **kwargs) -> str:
+    """
+    Returns translated text by key and user language.
+    If translation for the language is not found, Ukrainian (uk) is used.
+    """
     lang_code_short = user_language_code.split('_')[0].lower()
+
     lang_dict = TRANSLATIONS.get(lang_code_short, TRANSLATIONS['uk'])
+
     text = lang_dict.get(key, f"MISSING_TRANSLATION_KEY:{key}")
+
     try:
         formatted_text = text.format(**kwargs)
         return formatted_text
@@ -144,36 +157,48 @@ def get_translated_text(user_language_code: str, key: str, **kwargs) -> str:
         print(f"ERROR: Missing placeholder for key '{e}' in translation for '{key}' in language '{lang_code_short}'")
         return text
 
+
+# 🌤️ Get weather forecast (7 days)
 async def get_weather_forecast(city, user_lang_code='uk'):
     api_lang = WEATHERAPI_LANG_MAP.get(user_lang_code.split('_')[0].lower(), 'en')
+
     url = f"http://api.weatherapi.com/v1/forecast.json?key={WEATHER_API_KEY}&q={city}&days=7&lang={api_lang}"
+
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as response:
             if response.status != 200:
                 return None, None, get_translated_text(user_lang_code, 'error_data')
+
             data = await response.json()
+
             t_forecast_for = get_translated_text(user_lang_code, 'forecast_for',
                                                  location_name=data['location']['name'],
                                                  country_name=data['location']['country'])
             forecast = t_forecast_for
+
             dates = []
             temps = []
             humidities = []
+
             for day_data in data["forecast"]["forecastday"]:
                 date = day_data["date"]
                 day_details = day_data["day"]
                 astro_details = day_data["astro"]
+
                 condition = day_details["condition"]["text"]
                 avg_temp = day_details["avgtemp_c"]
                 max_temp = day_details["maxtemp_c"]
                 min_temp = day_details["mintemp_c"]
                 wind_kph = day_details["maxwind_kph"]
                 humidity = day_details["avghumidity"]
+
                 uv_index = day_details["uv"]
                 daily_chance_of_rain = day_details["daily_chance_of_rain"]
                 daily_chance_of_snow = day_details["daily_chance_of_snow"]
+
                 sunrise = astro_details["sunrise"]
                 sunset = astro_details["sunset"]
+
                 forecast += (
                     get_translated_text(user_lang_code, 'date_label', date=date) + "\n" +
                     get_translated_text(user_lang_code, 'condition_label', condition=condition) + "\n" +
@@ -189,26 +214,35 @@ async def get_weather_forecast(city, user_lang_code='uk'):
                     get_translated_text(user_lang_code, 'sunrise_label', sunrise=sunrise) + "\n" +
                     get_translated_text(user_lang_code, 'sunset_label', sunset=sunset)
                 )
+
                 dates.append(date)
                 temps.append(avg_temp)
                 humidities.append(humidity)
+
             return forecast, (dates, temps, humidities), None
 
+
+# 🌤️ Get hourly weather forecast
 async def get_hourly_forecast_data(city, date_str, user_lang_code='uk'):
     api_lang = WEATHERAPI_LANG_MAP.get(user_lang_code.split('_')[0].lower(), 'en')
-    url = f"http://api.weatherapi.com/v1/forecast.json?key={WEATHER_API_KEY}&q={city}&days=3&lang={api_lang}"
+    # WeatherAPI's 'forecast' endpoint provides hourly data for 'days' number of days
+    url = f"http://api.weatherapi.com/v1/forecast.json?key={WEATHER_API_KEY}&q={city}&days=3&lang={api_lang}" # Request for 3 days for hourly
 
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as response:
             if response.status != 200:
                 return None, None, get_translated_text(user_lang_code, 'error_data')
+
             data = await response.json()
             location_name = data['location']['name']
+
+            # Find data for the required date
             target_day_data = None
             for day_data in data["forecast"]["forecastday"]:
                 if day_data["date"] == date_str:
                     target_day_data = day_data
                     break
+
             if not target_day_data:
                 return None, None, get_translated_text(user_lang_code, 'no_hourly_data')
 
@@ -217,9 +251,11 @@ async def get_hourly_forecast_data(city, date_str, user_lang_code='uk'):
             hourly_times = []
 
             for hour_data in target_day_data['hour']:
+                # Parse the full datetime string
                 full_datetime_str = hour_data['time']
                 full_datetime_obj = datetime.strptime(full_datetime_str, '%Y-%m-%d %H:%M')
 
+                # Only include future or current hours
                 if full_datetime_obj >= datetime.now():
                     time_only_str = full_datetime_obj.strftime('%H:%M')
                     temp = hour_data['temp_c']
@@ -232,15 +268,18 @@ async def get_hourly_forecast_data(city, date_str, user_lang_code='uk'):
                                                                 condition=condition,
                                                                 wind=wind))
                     hourly_temps.append(temp)
-                    hourly_times.append(time_only_str)
+                    hourly_times.append(time_only_str) # Store only time for chart
 
             if not hourly_forecasts:
                 return None, None, get_translated_text(user_lang_code, 'no_hourly_data')
 
             forecast_text = get_translated_text(user_lang_code, 'hourly_forecast_for', location_name=location_name) + "\n\n"
             forecast_text += "\n".join(hourly_forecasts)
+
             return forecast_text, (hourly_times, hourly_temps), None
 
+
+# --- Chart Functions ---
 def generate_humidity_chart(dates, humidities, user_lang_code='uk'):
     plt.figure(figsize=(8, 4))
     plt.plot(dates, humidities, marker='o', linestyle='-', color='mediumseagreen')
@@ -249,6 +288,7 @@ def generate_humidity_chart(dates, humidities, user_lang_code='uk'):
     plt.ylabel(get_translated_text(user_lang_code, 'humidity_legend'))
     plt.grid(False)
     plt.xticks(rotation=45)
+
     buffer = BytesIO()
     plt.tight_layout()
     plt.savefig(buffer, format='png')
@@ -256,29 +296,35 @@ def generate_humidity_chart(dates, humidities, user_lang_code='uk'):
     plt.close()
     return buffer
 
+
 def generate_interactive_chart(dates, temps, humidities, user_lang_code='uk'):
     fig = go.Figure()
+
     fig.add_trace(go.Scatter(
         x=dates, y=temps, mode='lines+markers',
         name=get_translated_text(user_lang_code, 'temp_legend'),
         line=dict(color='skyblue')
     ))
+
     fig.add_trace(go.Scatter(
         x=dates, y=humidities, mode='lines+markers',
         name=get_translated_text(user_lang_code, 'humidity_legend'),
         line=dict(color='mediumseagreen')
     ))
+
     fig.update_layout(
         title=get_translated_text(user_lang_code, 'chart_interactive_title'),
         xaxis_title=get_translated_text(user_lang_code, 'xaxis_title'),
         yaxis_title=get_translated_text(user_lang_code, 'yaxis_title'),
         hovermode='x unified'
     )
+
     buffer = BytesIO()
     html_bytes = fig.to_html(full_html=False, include_plotlyjs='cdn').encode()
     buffer.write(html_bytes)
     buffer.seek(0)
     return buffer
+
 
 def generate_temp_chart(dates, temps, user_lang_code='uk'):
     plt.figure(figsize=(8, 4))
@@ -288,6 +334,7 @@ def generate_temp_chart(dates, temps, user_lang_code='uk'):
     plt.ylabel(get_translated_text(user_lang_code, 'temp_legend'))
     plt.grid(False)
     plt.xticks(rotation=45)
+
     buffer = BytesIO()
     plt.tight_layout()
     plt.savefig(buffer, format='png')
@@ -302,8 +349,11 @@ def generate_hourly_temp_chart(times, temps, user_lang_code='uk'):
     plt.xlabel(get_translated_text(user_lang_code, 'xaxis_title'))
     plt.ylabel(get_translated_text(user_lang_code, 'temp_legend'))
     plt.grid(True)
-    n = max(1, len(times) // 8)
+
+    # Choose every second/third hour for labels to avoid overlap
+    n = max(1, len(times) // 8) # show approximately 8 labels
     plt.xticks(times[::n], rotation=45, ha='right')
+
     buffer = BytesIO()
     plt.tight_layout()
     plt.savefig(buffer, format='png')
@@ -311,6 +361,7 @@ def generate_hourly_temp_chart(times, temps, user_lang_code='uk'):
     plt.close()
     return buffer
 
+# Helper function to generate start menu keyboard
 def get_start_keyboard(user_lang_code: str):
     keyboard = [
         [InlineKeyboardButton("Київ", callback_data='Київ')],
@@ -321,23 +372,36 @@ def get_start_keyboard(user_lang_code: str):
     ]
     return InlineKeyboardMarkup(keyboard)
 
+# 🚀 /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_lang_code = update.effective_user.language_code if update.effective_user else 'uk'
+
+    # Send first welcome message with brief info
     await update.message.reply_text(get_translated_text(user_lang_code, 'initial_welcome'), parse_mode="Markdown")
+
     reply_markup = get_start_keyboard(user_lang_code)
+    # Send second message with request to choose a city
     await update.message.reply_text(get_translated_text(user_lang_code, 'greeting_start'), reply_markup=reply_markup)
 
+
+# 📥 Handle message
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_lang_code = update.effective_user.language_code if update.effective_user else 'uk'
+
     city = update.message.text.strip()
     await update.message.reply_text(get_translated_text(user_lang_code, 'searching_city', city_name=city),
                                      parse_mode="Markdown")
+
+    # Store city name in `context.user_data` for future use
     context.user_data['current_city'] = city
+
     forecast, temp_data, error = await get_weather_forecast(translit(city), user_lang_code)
+
     if error:
         await update.message.reply_text(error)
     else:
         await update.message.reply_text(forecast, parse_mode="Markdown")
+
         dates, temps, humidities = temp_data
         chart_image = generate_temp_chart(dates, temps, user_lang_code)
         await update.message.reply_photo(photo=chart_image,
@@ -347,8 +411,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                          caption=get_translated_text(user_lang_code, 'chart_humidity_caption'))
         interactive = generate_interactive_chart(dates, temps, humidities, user_lang_code)
         await update.message.reply_document(document=interactive, filename=get_translated_text(user_lang_code,
-                                                                                               'chart_interactive_caption_filename'),
+                                                                                                'chart_interactive_caption_filename'),
                                              caption=get_translated_text(user_lang_code, 'chart_interactive_caption'))
+
+        # --- ADDED: "Hourly Weather" and "Other city" buttons ---
         keyboard = [
             [InlineKeyboardButton(get_translated_text(user_lang_code, 'hourly_weather_button'), callback_data=f'hourly_weather_{translit(city)}')],
             [InlineKeyboardButton(get_translated_text(user_lang_code, 'choose_city_button'), callback_data='manual')]
@@ -356,22 +422,31 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(get_translated_text(user_lang_code, 'additional_options_prompt'), reply_markup=reply_markup)
 
+
 async def handle_city_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+
     user_lang_code = update.effective_user.language_code if update.effective_user else 'uk'
+
     city_data = query.data
     if city_data == "manual":
         await query.edit_message_text(get_translated_text(user_lang_code, 'manual_city_prompt'))
         return
+
+    # Store city name in `context.user_data` for future use
     context.user_data['current_city'] = city_data
+
     await query.edit_message_text(get_translated_text(user_lang_code, 'getting_forecast_for', city_name=city_data),
                                   parse_mode="Markdown")
+
     forecast, temp_data, error = await get_weather_forecast(translit(city_data), user_lang_code)
+
     if error:
         await context.bot.send_message(chat_id=query.message.chat.id, text=error)
     else:
         await context.bot.send_message(chat_id=query.message.chat.id, text=forecast, parse_mode="Markdown")
+
         dates, temps, humidities = temp_data
         chart = generate_temp_chart(dates, temps, user_lang_code)
         await context.bot.send_photo(chat_id=query.message.chat.id, photo=chart,
@@ -382,8 +457,10 @@ async def handle_city_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         interactive = generate_interactive_chart(dates, temps, humidities, user_lang_code)
         await context.bot.send_document(chat_id=query.message.chat.id, document=interactive,
                                         filename=get_translated_text(user_lang_code,
-                                                                     'chart_interactive_caption_filename'),
+                                                                      'chart_interactive_caption_filename'),
                                         caption=get_translated_text(user_lang_code, 'chart_interactive_caption'))
+
+        # --- ADDED: "Hourly Weather" and "Other city" buttons ---
         keyboard = [
             [InlineKeyboardButton(get_translated_text(user_lang_code, 'hourly_weather_button'), callback_data=f'hourly_weather_{translit(city_data)}')],
             [InlineKeyboardButton(get_translated_text(user_lang_code, 'choose_city_button'), callback_data='manual')]
@@ -391,107 +468,139 @@ async def handle_city_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         reply_markup = InlineKeyboardMarkup(keyboard)
         await context.bot.send_message(chat_id=query.message.chat.id, text=get_translated_text(user_lang_code, 'additional_options_prompt'), reply_markup=reply_markup)
 
+
+# Handler for "Hourly Weather" button
 async def handle_hourly_weather_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+
     user_lang_code = update.effective_user.language_code if update.effective_user else 'uk'
+
+    # query.data will look like 'hourly_weather_Kyiv'
+    # Get city name, removing 'hourly_weather_' prefix
     city = query.data.replace('hourly_weather_', '')
-    context.user_data['current_city'] = city
+    context.user_data['current_city'] = city # Store city for future use
+
+    # Get 7-day forecast to retrieve available dates
+    # We already have logic for getting a 7-day forecast, so we'll use it.
+
     _, temp_data, error = await get_weather_forecast(city, user_lang_code)
+
     if error:
         await context.bot.send_message(chat_id=query.message.chat.id, text=error)
         return
-    dates = temp_data[0]
+
+    dates = temp_data[0] # Dates from 7-day forecast
+
     keyboard = []
+    # Add only the next 3 days, for which WeatherAPI usually provides detailed hourly forecast
     for date in dates[:3]:
+        # Callback data for hourly weather will look like 'show_hourly_2025-08-04'
         keyboard.append([InlineKeyboardButton(date, callback_data=f'show_hourly_{date}')])
+
+    # Add back to city menu button
     keyboard.append([InlineKeyboardButton(get_translated_text(user_lang_code, 'hourly_back_to_main_menu'), callback_data='back_to_main_menu')])
+
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(
         text=get_translated_text(user_lang_code, 'choose_date_hourly'),
         reply_markup=reply_markup
     )
 
+# Handler for hourly forecast date selection
 async def handle_hourly_date_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+
     user_lang_code = update.effective_user.language_code if update.effective_user else 'uk'
+
     if query.data == 'back_to_main_menu':
+        # If user pressed "Back to city menu", return to initial menu.
         await query.edit_message_text(get_translated_text(user_lang_code, 'greeting_start'), reply_markup=get_start_keyboard(user_lang_code))
         return
+
+    # query.data will look like 'show_hourly_2025-08-04'
     date_str = query.data.replace('show_hourly_', '')
+
     city = context.user_data.get('current_city')
     if not city:
         await query.edit_message_text(get_translated_text(user_lang_code, 'error_data'))
         return
+
     await query.edit_message_text(get_translated_text(user_lang_code, 'getting_forecast_for', city_name=city),
                                   parse_mode="Markdown")
+
     forecast_text, hourly_data, error = await get_hourly_forecast_data(translit(city), date_str, user_lang_code)
+
     if error:
         await context.bot.send_message(chat_id=query.message.chat.id, text=error)
     else:
         await context.bot.send_message(chat_id=query.message.chat.id, text=forecast_text, parse_mode="Markdown")
+
+        # Generate and send hourly temperature chart
         times, temps = hourly_data
         hourly_chart_image = generate_hourly_temp_chart(times, temps, user_lang_code)
         await context.bot.send_photo(chat_id=query.message.chat.id, photo=hourly_chart_image,
                                      caption=get_translated_text(user_lang_code, 'hourly_chart_caption'))
+
+    # After displaying hourly forecast, offer to return to the main city menu
     keyboard = [
-        [InlineKeyboardButton(get_translated_text(user_lang_code, 'hourly_weather_button'), callback_data=f'hourly_weather_{translit(city)}')],
+        [InlineKeyboardButton(get_translated_text(user_lang_code, 'hourly_weather_button'), callback_data=f'hourly_weather_{translit(city)}')], # Hourly button again for the same city
         [InlineKeyboardButton(get_translated_text(user_lang_code, 'choose_city_button'), callback_data='manual')],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await context.bot.send_message(chat_id=query.message.chat.id, text=get_translated_text(user_lang_code, 'what_next_prompt'), reply_markup=reply_markup)
 
-# Ініціалізація Telegram Application
-ptb_app = ApplicationBuilder().token(BOT_TOKEN).build() # <-- ВИДАЛЕНО post_init звідси
 
-# Додавання обробників до ptb_app
+# --- New setup for ASGI with FastAPI ---
+# Create the Python Telegram Bot Application instance
+ptb_app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+# Add handlers to the ptb_app
 ptb_app.add_handler(CommandHandler("start", start))
 ptb_app.add_handler(CallbackQueryHandler(handle_city_button, pattern='^(Київ|Львів|Харків|Одеса|manual)$'))
 ptb_app.add_handler(CallbackQueryHandler(handle_hourly_weather_button, pattern='^hourly_weather_.*$'))
-ptb_app.add_handler(CallbackQueryHandler(handle_hourly_date_selection, pattern='^show_hourly_.*$|^back_to_main_menu$'))
+ptb_app.add_handler(CallbackQueryHandler(handle_hourly_date_selection, pattern='^show_hourly_.*|^back_to_main_menu$'))
 ptb_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
+# Define the webhook URL path that Telegram will hit
+WEBHOOK_URL_PATH = "/telegram"
 
-# Створення FastAPI додатка
+# Create a FastAPI app instance. This will be the main ASGI app Gunicorn serves.
 app = FastAPI()
 
 @app.on_event("startup")
 async def startup_event():
-    # Ініціалізація та запуск ptb_app
-    print("🚀 Запускаю Telegram Application...")
-    await ptb_app.initialize() # <-- ДОДАНО ЦЕЙ РЯДОК
-    await ptb_app.start()      # Запуск
-    print("✅ Telegram Application запущено.")
-    # Встановлення вебхука після запуску програми
-    try:
-        full_webhook_url = f"{WEBHOOK_URL}/telegram"
-        await ptb_app.bot.set_webhook(url=full_webhook_url)
-        print(f"✅ Telegram webhook set to: {full_webhook_url}")
-    except Exception as e:
-        print(f"❌ Failed to set Telegram webhook: {e}")
-        # Якщо вебхук не встановлено, можливо, варто зупинити додаток
-        # sys.exit(1) # Залежно від бажаної поведінки, можна вийти тут
+    """
+    Executed when the FastAPI application starts up.
+    Sets the webhook with Telegram and starts the PTB application.
+    """
+    print("Application startup event triggered. Setting up webhook...")
+    # Set the webhook for Telegram, providing the full URL for your deployed service
+    await ptb_app.bot.set_webhook(url=f"{WEBHOOK_URL}{WEBHOOK_URL_PATH}")
+    print(f"Webhook set to: {WEBHOOK_URL}{WEBHOOK_URL_PATH}")
+    # Start the PTB application's internal mechanisms (e.g., webhook listeners)
+    await ptb_app.start()
+    print("PTB application started.")
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    # Зупиняємо ptb_app
-    print("🛑 Зупиняю Telegram Application...")
-    await ptb_app.shutdown()
-    print("✅ Telegram Application зупинено.")
+    """
+    Executed when the FastAPI application shuts down.
+    Stops the PTB application.
+    """
+    print("Application shutdown event triggered. Stopping PTB application...")
+    await ptb_app.stop()
+    print("PTB application stopped.")
 
-@app.post("/telegram")
-async def telegram_webhook(request: Request):
-    """Обробляє вхідні вебхуки Telegram."""
-    try:
-        update = Update.de_json(await request.json(), ptb_app.bot)
-        await ptb_app.process_update(update) # <-- ЗМІНЕНО: Використовуємо process_update
-        return {"message": "OK"}
-    except Exception as e:
-        print(f"❌ Помилка обробки вебхука: {e}")
-        return {"message": "Internal Server Error"}, 500
+# Mount the PTB's webhook application to the FastAPI app at the specified path.
+# This makes FastAPI route incoming Telegram updates to the PTB app's handler.
+app.mount(WEBHOOK_URL_PATH, ptb_app.webhook_application)
 
-# Додамо endpoint для перевірки стану (Health Check)
-@app.get("/")
-async def read_root():
-    return {"status": "ok", "message": "Weather Online Bot is running!"}
+# This `if __name__ == '__main__':` block is only for local development/testing.
+# When deployed via Gunicorn, this block is typically skipped.
+if __name__ == '__main__':
+    print(f"✅ Бот налаштований на Webhooks. Слухаю на порту {PORT}, шлях {WEBHOOK_URL_PATH}.")
+    # Run the FastAPI app locally using uvicorn.
+    # Gunicorn will handle this in production.
+    uvicorn.run(app, host="0.0.0.0", port=PORT)
