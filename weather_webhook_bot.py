@@ -1,4 +1,4 @@
-from datetime import time, datetime # Додано імпорт datetime
+from datetime import time, datetime
 from telegram.ext import MessageHandler, filters, CallbackContext
 import plotly.graph_objs as go
 from translitua import translit, RussianSimple
@@ -7,8 +7,8 @@ from telegram.ext import CallbackQueryHandler
 import matplotlib.pyplot as plt
 from io import BytesIO
 import aiohttp
-from telegram import Update
-from telegram.ext import (
+from telegram import (
+    Application, # Імпортуємо Application напряму
     ApplicationBuilder,
     CommandHandler,
     MessageHandler,
@@ -17,7 +17,7 @@ from telegram.ext import (
 )
 import os
 import uvicorn
-import sys # Додано імпорт sys для sys.exit
+import sys
 
 # 🔧 ОТРИМУЄМО API KEY ТА ТОКЕН ЗІ ЗМІННИХ СЕРЕДОВИЩА (REPLIT SECRETS / RENDER ENVIRONMENT)
 # Важливо: переконайтеся, що ви додали ці змінні у розділ "Environment" на Render
@@ -27,6 +27,14 @@ BOT_TOKEN = os.environ.get('BOT_TOKEN')
 PORT = int(os.environ.get('PORT', 8080))
 # ДОДАНО: URL вашого сервісу Render. Його потрібно додати як змінну середовища на Render.
 WEBHOOK_URL = os.environ.get('WEBHOOK_URL')
+
+# Перевірка, чи змінні були успішно завантажені (для виведення в консоль при локальному запуску)
+if not WEATHER_API_KEY:
+    print("Помилка: Змінна середовища 'WEATHER_API_KEY' не знайдена. Перевірте Render Environment.")
+if not BOT_TOKEN:
+    print("Помилка: Змінна середовища 'BOT_TOKEN' не знайдена. Перевірте Render Environment.")
+if not WEBHOOK_URL:
+    print("Помилка: Змінна середовища 'WEBHOOK_URL' не знайдена. Вона потрібна для Webhooks. Перевірте Render Environment.")
 
 # --- Словник перекладів --- (змінено, додані нові ключі)
 TRANSLATIONS = {
@@ -540,36 +548,49 @@ async def handle_hourly_date_selection(update: Update, context: ContextTypes.DEF
     await context.bot.send_message(chat_id=query.message.chat.id, text=get_translated_text(user_lang_code, 'what_next_prompt'), reply_markup=reply_markup)
 
 
-# 🧠 Запуск бота
+# Створення об'єкта Application на верхньому рівні модуля
+# Це дозволяє uvicorn імпортувати "app"
+# Важливо: BOT_TOKEN, WEBHOOK_URL та WEATHER_API_KEY мають бути доступні як змінні середовища
+# перед запуском uvicorn
+try:
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+except Exception as e:
+    print(f"Помилка при ініціалізації ApplicationBuilder: {e}")
+    # Якщо BOT_TOKEN недійсний або відсутній, програма не зможе ініціалізувати Application
+    # і uvicorn не зможе знайти 'app'.
+    # Ми виводимо повідомлення і продовжуємо, щоб дозволити 'if __name__ == "__main__":' обробляти вихід.
+    app = None # Встановлюємо app як None, якщо ініціалізація не вдалася
+
+
 if __name__ == '__main__':
     # Перевіряємо, чи були змінні завантажені, перш ніж запускати бота
+    # Якщо app == None, це означає, що ініціалізація вище не вдалася (можливо, через відсутній BOT_TOKEN)
     if not BOT_TOKEN:
-        print("Помилка: Змінна середовища 'BOT_TOKEN' не знайдена. Будь ласка, додайте її до Render Environment.")
+        print("Критична помилка: BOT_TOKEN відсутній. Бот не може бути запущений.")
         sys.exit(1) # Зупинити програму, якщо немає токена
     if not WEBHOOK_URL:
-        print("Помилка: Змінна середовища 'WEBHOOK_URL' не знайдена. Вона потрібна для Webhooks. Будь ласка, додайте її до Render Environment.")
+        print("Критична помилка: WEBHOOK_URL відсутня. Вона потрібна для Webhooks. Бот не може бути запущений.")
         sys.exit(1) # Зупинити програму, якщо немає URL вебхука
     if not WEATHER_API_KEY:
-        print("Помилка: Змінна середовища 'WEATHER_API_KEY' не знайдена. Будь ласка, додайте її до Render Environment.")
+        print("Критична помилка: WEATHER_API_KEY відсутній. Бот не може бути запущений.")
         sys.exit(1) # Зупинити програму, якщо немає ключа API погоди
-    
-    # Створення об'єкта Application відбувається ЗАВЖДИ, незалежно від перевірок
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(handle_city_button, pattern='^(Київ|Львів|Харків|Одеса|manual)$'))
-    # ДОДАНО: Обробник для кнопки "Погодинна погода"
-    app.add_handler(CallbackQueryHandler(handle_hourly_weather_button, pattern='^hourly_weather_.*$'))
-    # ДОДАНО: Обробник для вибору дати погодинного прогнозу та повернення
-    app.add_handler(CallbackQueryHandler(handle_hourly_date_selection, pattern='^show_hourly_.*$|^back_to_main_menu$'))
+    # Додаємо обробники тільки якщо 'app' успішно ініціалізовано
+    if app:
+        app.add_handler(CommandHandler("start", start))
+        app.add_handler(CallbackQueryHandler(handle_city_button, pattern='^(Київ|Львів|Харків|Одеса|manual)$'))
+        app.add_handler(CallbackQueryHandler(handle_hourly_weather_button, pattern='^hourly_weather_.*$'))
+        app.add_handler(CallbackQueryHandler(handle_hourly_date_selection, pattern='^show_hourly_.*$|^back_to_main_menu$'))
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+        print(f"✅ Бот налаштований на Webhooks. Слухаю на порту {PORT}, шлях /telegram.")
 
-    print(f"✅ Бот налаштований на Webhooks. Слухаю на порту {PORT}, шлях /telegram.")
-
-    app.run_webhook(
-        listen="0.0.0.0",      # Слухати на всіх доступних інтерфейсах
-        port=PORT,             # Використовувати порт, наданий Render.com (через змінну середовища $PORT)
-        url_path="/telegram",  # Шлях на вашому сервері, куди Telegram надсилатиме оновлення
-        webhook_url=f"{WEBHOOK_URL}/telegram" # Повний URL для встановлення вебхуку на Telegram
-    )
+        app.run_webhook(
+            listen="0.0.0.0",      # Слухати на всіх доступних інтерфейсах
+            port=PORT,             # Використовувати порт, наданий Render.com (через змінну середовища $PORT)
+            url_path="/telegram",  # Шлях на вашому сервері, куди Telegram надсилатиме оновлення
+            webhook_url=f"{WEBHOOK_URL}/telegram" # Повний URL для встановлення вебхуку на Telegram
+        )
+    else:
+        print("Бот не може бути запущений, оскільки 'app' не був ініціалізований через відсутні або недійсні змінні середовища.")
+        sys.exit(1)
