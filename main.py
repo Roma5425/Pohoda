@@ -451,7 +451,8 @@ async def application_startup(application: Application):
     except Exception as e:
         print(f"❌ Failed to set Telegram webhook: {e}")
 
-app = ApplicationBuilder().token(BOT_TOKEN).post_init(application_startup).build()
+# Виправлений рядок: тепер app є викликуваним ASGI-додатком
+app = ApplicationBuilder().token(BOT_TOKEN).post_init(application_startup).build().webhooks("/telegram")
 
 # Додавання обробників знову після перезбірки `app` з `post_init`
 app.add_handler(CommandHandler("start", start))
