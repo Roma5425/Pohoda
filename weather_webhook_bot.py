@@ -17,6 +17,7 @@ from telegram.ext import (
 )
 import os
 import uvicorn
+import sys # Додано імпорт sys для sys.exit
 
 # 🔧 ОТРИМУЄМО API KEY ТА ТОКЕН ЗІ ЗМІННИХ СЕРЕДОВИЩА (REPLIT SECRETS / RENDER ENVIRONMENT)
 # Важливо: переконайтеся, що ви додали ці змінні у розділ "Environment" на Render
@@ -26,15 +27,6 @@ BOT_TOKEN = os.environ.get('BOT_TOKEN')
 PORT = int(os.environ.get('PORT', 8080))
 # ДОДАНО: URL вашого сервісу Render. Його потрібно додати як змінну середовища на Render.
 WEBHOOK_URL = os.environ.get('WEBHOOK_URL')
-
-# Перевірка, чи змінні були успішно завантажені
-if not WEATHER_API_KEY:
-    print("Помилка: Змінна середовища 'WEATHER_API_KEY' не знайдена. Перевірте Render Environment.")
-if not BOT_TOKEN:
-    print("Помилка: Змінна середовища 'BOT_TOKEN' не знайдена. Перевірте Render Environment.")
-# ДОДАНО: Перевірка для WEBHOOK_URL
-if not WEBHOOK_URL:
-    print("Помилка: Змінна середовища 'WEBHOOK_URL' не знайдена. Вона потрібна для Webhooks. Перевірте Render Environment.")
 
 # --- Словник перекладів --- (змінено, додані нові ключі)
 TRANSLATIONS = {
@@ -552,26 +544,32 @@ async def handle_hourly_date_selection(update: Update, context: ContextTypes.DEF
 if __name__ == '__main__':
     # Перевіряємо, чи були змінні завантажені, перш ніж запускати бота
     if not BOT_TOKEN:
-        print("Бот не може бути запущений без BOT_TOKEN. Будь ласка, додайте його до Render Environment.")
-    elif not WEBHOOK_URL:
-        print("Бот не може бути запущений без WEBHOOK_URL. Будь ласка, додайте її до Render Environment.")
-    else:
-        app = ApplicationBuilder().token(BOT_TOKEN).build()
+        print("Помилка: Змінна середовища 'BOT_TOKEN' не знайдена. Будь ласка, додайте її до Render Environment.")
+        sys.exit(1) # Зупинити програму, якщо немає токена
+    if not WEBHOOK_URL:
+        print("Помилка: Змінна середовища 'WEBHOOK_URL' не знайдена. Вона потрібна для Webhooks. Будь ласка, додайте її до Render Environment.")
+        sys.exit(1) # Зупинити програму, якщо немає URL вебхука
+    if not WEATHER_API_KEY:
+        print("Помилка: Змінна середовища 'WEATHER_API_KEY' не знайдена. Будь ласка, додайте її до Render Environment.")
+        sys.exit(1) # Зупинити програму, якщо немає ключа API погоди
+    
+    # Створення об'єкта Application відбувається ЗАВЖДИ, незалежно від перевірок
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-        app.add_handler(CommandHandler("start", start))
-        app.add_handler(CallbackQueryHandler(handle_city_button, pattern='^(Київ|Львів|Харків|Одеса|manual)$'))
-        # ДОДАНО: Обробник для кнопки "Погодинна погода"
-        app.add_handler(CallbackQueryHandler(handle_hourly_weather_button, pattern='^hourly_weather_.*$'))
-        # ДОДАНО: Обробник для вибору дати погодинного прогнозу та повернення
-        app.add_handler(CallbackQueryHandler(handle_hourly_date_selection, pattern='^show_hourly_.*$|^back_to_main_menu$'))
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(handle_city_button, pattern='^(Київ|Львів|Харків|Одеса|manual)$'))
+    # ДОДАНО: Обробник для кнопки "Погодинна погода"
+    app.add_handler(CallbackQueryHandler(handle_hourly_weather_button, pattern='^hourly_weather_.*$'))
+    # ДОДАНО: Обробник для вибору дати погодинного прогнозу та повернення
+    app.add_handler(CallbackQueryHandler(handle_hourly_date_selection, pattern='^show_hourly_.*$|^back_to_main_menu$'))
 
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-        print(f"✅ Бот налаштований на Webhooks. Слухаю на порту {PORT}, шлях /telegram.")
+    print(f"✅ Бот налаштований на Webhooks. Слухаю на порту {PORT}, шлях /telegram.")
 
-        app.run_webhook(
-            listen="0.0.0.0",      # Слухати на всіх доступних інтерфейсах
-            port=PORT,             # Використовувати порт, наданий Render.com (через змінну середовища $PORT)
-            url_path="/telegram",  # Шлях на вашому сервері, куди Telegram надсилатиме оновлення
-            webhook_url=f"{WEBHOOK_URL}/telegram" # Повний URL для встановлення вебхуку на Telegram
-        )
+    app.run_webhook(
+        listen="0.0.0.0",      # Слухати на всіх доступних інтерфейсах
+        port=PORT,             # Використовувати порт, наданий Render.com (через змінну середовища $PORT)
+        url_path="/telegram",  # Шлях на вашому сервері, куди Telegram надсилатиме оновлення
+        webhook_url=f"{WEBHOOK_URL}/telegram" # Повний URL для встановлення вебхуку на Telegram
+    )
