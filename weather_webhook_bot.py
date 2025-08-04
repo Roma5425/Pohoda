@@ -15,12 +15,28 @@ from telegram.ext import (
     ContextTypes,
     filters
 )
+import os # <-- Додано імпорт модуля os
+import uvicorn # <-- ДОДАНО: Для запуску ASGI сервера (потрібно для Webhooks)
 
-# 🔧 ВСТАВ СВІЙ API KEY ТУТ
-WEATHER_API_KEY = "a3c564f1bb164e2fa31182534253107"
-BOT_TOKEN = "7602321117:AAEfDXsoD2OYrPYWAmUIYSDtw1H8IFFGMuA"
+# 🔧 ОТРИМУЄМО API KEY ТА ТОКЕН ЗІ ЗМІННИХ СЕРЕДОВИЩА (REPLIT SECRETS / RENDER ENVIRONMENT)
+# Важливо: переконайтеся, що ви додали ці змінні у розділ "Environment" на Render
+WEATHER_API_KEY = os.environ.get('WEATHER_API_KEY')
+BOT_TOKEN = os.environ.get('BOT_TOKEN')
+# ЗМІНЕНО: Отримуємо порт, наданий Render.com. Render зазвичай використовує 10000.
+PORT = int(os.environ.get('PORT', 8080))
+# ДОДАНО: URL вашого сервісу Render. Його потрібно додати як змінну середовища на Render.
+WEBHOOK_URL = os.environ.get('WEBHOOK_URL')
 
-# --- Словник перекладів ---
+# Перевірка, чи змінні були успішно завантажені
+if not WEATHER_API_KEY:
+    print("Помилка: Змінна середовища 'WEATHER_API_KEY' не знайдена. Перевірте Render Environment.")
+if not BOT_TOKEN:
+    print("Помилка: Змінна середовища 'BOT_TOKEN' не знайдена. Перевірте Render Environment.")
+# ДОДАНО: Перевірка для WEBHOOK_URL
+if not WEBHOOK_URL:
+    print("Помилка: Змінна середовища 'WEBHOOK_URL' не знайдена. Вона потрібна для Webhooks. Перевірте Render Environment.")
+
+# --- Словник перекладів --- (без змін)
 TRANSLATIONS = {
     'uk': {
         'initial_welcome': "👋 Привіт! Я ваш особистий метеоролог Weather Online Bot! 🌤️\n\nЯ допоможу тобі отримати детальний прогноз погоди на 7 днів для будь-якого міста світу, а також покажу зручні графіки температури та вологості.",
@@ -118,6 +134,7 @@ def get_translated_text(user_language_code: str, key: str, **kwargs) -> str:
 async def get_weather_forecast(city, user_lang_code='uk'):
     api_lang = WEATHERAPI_LANG_MAP.get(user_lang_code.split('_')[0].lower(), 'en')
 
+    # Використовуємо WEATHER_API_KEY, отриманий зі змінних середовища
     url = f"http://api.weatherapi.com/v1/forecast.json?key={WEATHER_API_KEY}&q={city}&days=7&lang={api_lang}"
 
     async with aiohttp.ClientSession() as session:
@@ -178,7 +195,7 @@ async def get_weather_forecast(city, user_lang_code='uk'):
             return forecast, (dates, temps, humidities), None
 
 
-# --- Функції графіків ---
+# --- Функції графіків --- (без змін)
 def generate_humidity_chart(dates, humidities, user_lang_code='uk'):
     plt.figure(figsize=(8, 4))
     plt.plot(dates, humidities, marker='o', linestyle='-', color='mediumseagreen')
@@ -279,13 +296,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         dates, temps, humidities = temp_data
         chart_image = generate_temp_chart(dates, temps, user_lang_code)
         await update.message.reply_photo(photo=chart_image,
-                                         caption=get_translated_text(user_lang_code, 'chart_temp_caption'))
+                                        caption=get_translated_text(user_lang_code, 'chart_temp_caption'))
         humidity_chart = generate_humidity_chart(dates, humidities, user_lang_code)
         await update.message.reply_photo(photo=humidity_chart,
-                                         caption=get_translated_text(user_lang_code, 'chart_humidity_caption'))
+                                        caption=get_translated_text(user_lang_code, 'chart_humidity_caption'))
         interactive = generate_interactive_chart(dates, temps, humidities, user_lang_code)
         await update.message.reply_document(document=interactive, filename=get_translated_text(user_lang_code,
-                                                                                               'chart_interactive_caption_filename'),
+                                                                                                'chart_interactive_caption_filename'),
                                             caption=get_translated_text(user_lang_code, 'chart_interactive_caption'))
 
 
@@ -320,17 +337,32 @@ async def handle_city_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         interactive = generate_interactive_chart(dates, temps, humidities, user_lang_code)
         await context.bot.send_document(chat_id=query.message.chat.id, document=interactive,
                                         filename=get_translated_text(user_lang_code,
-                                                                     'chart_interactive_caption_filename'),
+                                                                    'chart_interactive_caption_filename'),
                                         caption=get_translated_text(user_lang_code, 'chart_interactive_caption'))
 
 
 # 🧠 Запуск бота
 if __name__ == '__main__':
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    # Перевіряємо, чи були змінні завантажені, перш ніж запускати бота
+    if not BOT_TOKEN:
+        print("Бот не може бути запущений без BOT_TOKEN. Будь ласка, додайте його до Render Environment.")
+    elif not WEBHOOK_URL:
+        print("Бот не може бути запущений без WEBHOOK_URL. Будь ласка, додайте її до Render Environment.")
+    else:
+        app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(handle_city_button))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+        app.add_handler(CommandHandler("start", start))
+        app.add_handler(CallbackQueryHandler(handle_city_button))
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("✅ Бот працює. Очікую повідомлення...")
-    app.run_polling()
+        # ЗМІНЕНО: Замість app.run_polling() використовуємо app.run_webhook()
+        # Цей метод запустить локальний веб-сервер, який буде приймати HTTP-запити від Telegram.
+        # Telegram Bot API автоматично встановить webhook, якщо його ще немає.
+        print(f"✅ Бот налаштований на Webhooks. Слухаю на порту {PORT}, шлях /telegram.")
+
+        app.run_webhook(
+            listen="0.0.0.0",     # Слухати на всіх доступних інтерфейсах
+            port=PORT,            # Використовувати порт, наданий Render.com (через змінну середовища $PORT)
+            url_path="/telegram", # Шлях на вашому сервері, куди Telegram надсилатиме оновлення
+            webhook_url=f"{WEBHOOK_URL}/telegram" # Повний URL для встановлення вебхуку на Telegram
+        )
