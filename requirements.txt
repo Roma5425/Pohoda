@@ -1,6 +1,7 @@
-python-telegram-bot==20.7 # Or a more recent 20.x version
+python-telegram-bot==20.7
 plotly
 matplotlib
 aiohttp
 uvicorn
 translitua
+
