@@ -19,6 +19,7 @@ from telegram.ext import (
     filters,
     CallbackContext
 )
+from fastapi import FastAPI, Request # <-- НОВИЙ ІМПОРТ
 
 # 🔧 ОТРИМУЄМО API KEY ТА ТОКЕН ЗІ ЗМІННИХ СЕРЕДОВИЩА
 WEATHER_API_KEY = os.environ.get('WEATHER_API_KEY')
@@ -441,6 +442,19 @@ async def handle_hourly_date_selection(update: Update, context: ContextTypes.DEF
     reply_markup = InlineKeyboardMarkup(keyboard)
     await context.bot.send_message(chat_id=query.message.chat.id, text=get_translated_text(user_lang_code, 'what_next_prompt'), reply_markup=reply_markup)
 
+# Ініціалізація Telegram Application
+# application_startup буде викликана після побудови `ptb_app`
+ptb_app = ApplicationBuilder().token(BOT_TOKEN).post_init(
+    lambda app: application_startup(app) # Обгортаємо, щоб передати сам додаток
+).build()
+
+# Додавання обробників до ptb_app
+ptb_app.add_handler(CommandHandler("start", start))
+ptb_app.add_handler(CallbackQueryHandler(handle_city_button, pattern='^(Київ|Львів|Харків|Одеса|manual)$'))
+ptb_app.add_handler(CallbackQueryHandler(handle_hourly_weather_button, pattern='^hourly_weather_.*$'))
+ptb_app.add_handler(CallbackQueryHandler(handle_hourly_date_selection, pattern='^show_hourly_.*$|^back_to_main_menu$'))
+ptb_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
 # Цей `app` об'єкт є ASGI-додатком, який буде обслуговувати Gunicorn/Uvicorn.
 # Коллбек `application_startup` виконається при запуску додатка Uvicorn.
 async def application_startup(application: Application):
@@ -451,12 +465,26 @@ async def application_startup(application: Application):
     except Exception as e:
         print(f"❌ Failed to set Telegram webhook: {e}")
 
-# Виправлений рядок: тепер app є викликуваним ASGI-додатком
-app = ApplicationBuilder().token(BOT_TOKEN).post_init(application_startup).build().webhooks("/telegram")
+# Створення FastAPI додатка
+app = FastAPI() # <-- Створюємо FastAPI додаток
 
-# Додавання обробників знову після перезбірки `app` з `post_init`
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CallbackQueryHandler(handle_city_button, pattern='^(Київ|Львів|Харків|Одеса|manual)$'))
-app.add_handler(CallbackQueryHandler(handle_hourly_weather_button, pattern='^hourly_weather_.*$'))
-app.add_handler(CallbackQueryHandler(handle_hourly_date_selection, pattern='^show_hourly_.*$|^back_to_main_menu$'))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+@app.on_event("startup")
+async def startup_event():
+    # Запускаємо ptb_app
+    await ptb_app.start()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    # Зупиняємо ptb_app
+    await ptb_app.shutdown()
+
+@app.post("/telegram")
+async def telegram_webhook(request: Request):
+    """Обробляє вхідні вебхуки Telegram."""
+    await ptb_app.update_queue.put(Update.de_json(await request.json(), ptb_app.bot))
+    return {"message": "OK"}
+
+# Додамо endpoint для перевірки стану (Health Check)
+@app.get("/")
+async def read_root():
+    return {"status": "ok", "message": "Weather Online Bot is running!"}
