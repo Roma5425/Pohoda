@@ -227,10 +227,10 @@ async def get_hourly_forecast_data(city, date_str, user_lang_code='uk'):
                     wind = hour_data['wind_kph']
 
                     hourly_forecasts.append(get_translated_text(user_lang_code, 'hourly_details',
-                                                                 time=time_only_str,
-                                                                 temp=temp,
-                                                                 condition=condition,
-                                                                 wind=wind))
+                                                                time=time_only_str,
+                                                                temp=temp,
+                                                                condition=condition,
+                                                                wind=wind))
                     hourly_temps.append(temp)
                     hourly_times.append(time_only_str)
 
@@ -347,7 +347,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                          caption=get_translated_text(user_lang_code, 'chart_humidity_caption'))
         interactive = generate_interactive_chart(dates, temps, humidities, user_lang_code)
         await update.message.reply_document(document=interactive, filename=get_translated_text(user_lang_code,
-                                                                                                'chart_interactive_caption_filename'),
+                                                                                               'chart_interactive_caption_filename'),
                                              caption=get_translated_text(user_lang_code, 'chart_interactive_caption'))
         keyboard = [
             [InlineKeyboardButton(get_translated_text(user_lang_code, 'hourly_weather_button'), callback_data=f'hourly_weather_{translit(city)}')],
@@ -381,9 +381,9 @@ async def handle_city_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
                                      caption=get_translated_text(user_lang_code, 'chart_humidity_caption'))
         interactive = generate_interactive_chart(dates, temps, humidities, user_lang_code)
         await context.bot.send_document(chat_id=query.message.chat.id, document=interactive,
-                                         filename=get_translated_text(user_lang_code,
-                                                                      'chart_interactive_caption_filename'),
-                                         caption=get_translated_text(user_lang_code, 'chart_interactive_caption'))
+                                        filename=get_translated_text(user_lang_code,
+                                                                     'chart_interactive_caption_filename'),
+                                        caption=get_translated_text(user_lang_code, 'chart_interactive_caption'))
         keyboard = [
             [InlineKeyboardButton(get_translated_text(user_lang_code, 'hourly_weather_button'), callback_data=f'hourly_weather_{translit(city_data)}')],
             [InlineKeyboardButton(get_translated_text(user_lang_code, 'choose_city_button'), callback_data='manual')]
@@ -443,10 +443,7 @@ async def handle_hourly_date_selection(update: Update, context: ContextTypes.DEF
     await context.bot.send_message(chat_id=query.message.chat.id, text=get_translated_text(user_lang_code, 'what_next_prompt'), reply_markup=reply_markup)
 
 # Ініціалізація Telegram Application
-# application_startup буде викликана після побудови `ptb_app`
-ptb_app = ApplicationBuilder().token(BOT_TOKEN).post_init(
-    lambda app: application_startup(app) # Обгортаємо, щоб передати сам додаток
-).build()
+ptb_app = ApplicationBuilder().token(BOT_TOKEN).build() # <-- ВИДАЛЕНО post_init звідси
 
 # Додавання обробників до ptb_app
 ptb_app.add_handler(CommandHandler("start", start))
@@ -455,34 +452,44 @@ ptb_app.add_handler(CallbackQueryHandler(handle_hourly_weather_button, pattern='
 ptb_app.add_handler(CallbackQueryHandler(handle_hourly_date_selection, pattern='^show_hourly_.*$|^back_to_main_menu$'))
 ptb_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-# Цей `app` об'єкт є ASGI-додатком, який буде обслуговувати Gunicorn/Uvicorn.
-# Коллбек `application_startup` виконається при запуску додатка Uvicorn.
-async def application_startup(application: Application):
-    try:
-        full_webhook_url = f"{WEBHOOK_URL}/telegram"
-        await application.bot.set_webhook(url=full_webhook_url)
-        print(f"✅ Telegram webhook set to: {full_webhook_url}")
-    except Exception as e:
-        print(f"❌ Failed to set Telegram webhook: {e}")
 
 # Створення FastAPI додатка
-app = FastAPI() # <-- Створюємо FastAPI додаток
+app = FastAPI()
 
 @app.on_event("startup")
 async def startup_event():
-    # Запускаємо ptb_app
-    await ptb_app.start()
+    # Ініціалізація та запуск ptb_app
+    print("🚀 Запускаю Telegram Application...")
+    await ptb_app.initialize() # <-- ДОДАНО ЦЕЙ РЯДОК
+    await ptb_app.start()      # Запуск
+    print("✅ Telegram Application запущено.")
+    # Встановлення вебхука після запуску програми
+    try:
+        full_webhook_url = f"{WEBHOOK_URL}/telegram"
+        await ptb_app.bot.set_webhook(url=full_webhook_url)
+        print(f"✅ Telegram webhook set to: {full_webhook_url}")
+    except Exception as e:
+        print(f"❌ Failed to set Telegram webhook: {e}")
+        # Якщо вебхук не встановлено, можливо, варто зупинити додаток
+        # sys.exit(1) # Залежно від бажаної поведінки, можна вийти тут
 
 @app.on_event("shutdown")
 async def shutdown_event():
     # Зупиняємо ptb_app
+    print("🛑 Зупиняю Telegram Application...")
     await ptb_app.shutdown()
+    print("✅ Telegram Application зупинено.")
 
 @app.post("/telegram")
 async def telegram_webhook(request: Request):
     """Обробляє вхідні вебхуки Telegram."""
-    await ptb_app.update_queue.put(Update.de_json(await request.json(), ptb_app.bot))
-    return {"message": "OK"}
+    try:
+        update = Update.de_json(await request.json(), ptb_app.bot)
+        await ptb_app.process_update(update) # <-- ЗМІНЕНО: Використовуємо process_update
+        return {"message": "OK"}
+    except Exception as e:
+        print(f"❌ Помилка обробки вебхука: {e}")
+        return {"message": "Internal Server Error"}, 500
 
 # Додамо endpoint для перевірки стану (Health Check)
 @app.get("/")
