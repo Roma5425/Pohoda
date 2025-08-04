@@ -1,4 +1,4 @@
-from datetime import time
+from datetime import time, datetime # Додано імпорт datetime
 from telegram.ext import MessageHandler, filters, CallbackContext
 import plotly.graph_objs as go
 from translitua import translit, RussianSimple
@@ -15,8 +15,8 @@ from telegram.ext import (
     ContextTypes,
     filters
 )
-import os # <-- Додано імпорт модуля os
-import uvicorn # <-- ДОДАНО: Для запуску ASGI сервера (потрібно для Webhooks)
+import os
+import uvicorn
 
 # 🔧 ОТРИМУЄМО API KEY ТА ТОКЕН ЗІ ЗМІННИХ СЕРЕДОВИЩА (REPLIT SECRETS / RENDER ENVIRONMENT)
 # Важливо: переконайтеся, що ви додали ці змінні у розділ "Environment" на Render
@@ -36,7 +36,7 @@ if not BOT_TOKEN:
 if not WEBHOOK_URL:
     print("Помилка: Змінна середовища 'WEBHOOK_URL' не знайдена. Вона потрібна для Webhooks. Перевірте Render Environment.")
 
-# --- Словник перекладів --- (без змін)
+# --- Словник перекладів --- (змінено, додані нові ключі)
 TRANSLATIONS = {
     'uk': {
         'initial_welcome': "👋 Привіт! Я ваш особистий метеоролог Weather Online Bot! 🌤️\n\nЯ допоможу тобі отримати детальний прогноз погоди на 7 днів для будь-якого міста світу, а також покажу зручні графіки температури та вологості.",
@@ -68,6 +68,18 @@ TRANSLATIONS = {
         'temp_legend': 'Температура (°C)',
         'humidity_legend': 'Вологість (%)',
         'chart_interactive_caption_filename': "Графік_погоди.html",
+        # --- НОВІ ПЕРЕКЛАДИ ДЛЯ ПОГОДИННОЇ ПОГОДИ ---
+        'hourly_weather_button': "Погодинна погода ⏰",
+        'hourly_forecast_for': "Погодинний прогноз для *{location_name}*:",
+        'hourly_details': "*{time}*: {temp}°C, {condition}, Вітер: {wind} км/год",
+        'no_hourly_data': "Не вдалося отримати погодинний прогноз для цього міста.",
+        'choose_date_hourly': "Оберіть дату для погодинного прогнозу:",
+        'hourly_back_to_main_menu': "⬅️ Назад до меню міста",
+        'hourly_forecast_caption': "📊 Погодинний прогноз",
+        'hourly_chart_title': "Погодинна температура",
+        'hourly_chart_caption': "📊 Графік погодинної температури",
+        'additional_options_prompt': "Додаткові опції:",
+        'what_next_prompt': "Що далі?",
     },
     'en': {
         'initial_welcome': "👋 Hello! I'm your personal meteorologist, Weather Online Bot! 🌤️\n\nI'll help you get a detailed 7-day weather forecast for any city in the world, and also show you convenient temperature and humidity charts.",
@@ -99,6 +111,18 @@ TRANSLATIONS = {
         'temp_legend': 'Temperature (°C)',
         'humidity_legend': 'Humidity (%)',
         'chart_interactive_caption_filename': "Weather_Chart.html",
+        # --- NEW TRANSLATIONS FOR HOURLY WEATHER ---
+        'hourly_weather_button': "Hourly Weather ⏰",
+        'hourly_forecast_for': "Hourly forecast for *{location_name}*:",
+        'hourly_details': "*{time}*: {temp}°C, {condition}, Wind: {wind} km/h",
+        'no_hourly_data': "Failed to get hourly forecast for this city.",
+        'choose_date_hourly': "Choose a date for hourly forecast:",
+        'hourly_back_to_main_menu': "⬅️ Back to city menu",
+        'hourly_forecast_caption': "📊 Hourly forecast",
+        'hourly_chart_title': "Hourly Temperature",
+        'hourly_chart_caption': "📊 Hourly temperature chart",
+        'additional_options_prompt': "Additional options:",
+        'what_next_prompt': "What's next?",
     }
 }
 
@@ -130,11 +154,10 @@ def get_translated_text(user_language_code: str, key: str, **kwargs) -> str:
         return text
 
 
-# 🌤️ Отримати прогноз погоди
+# 🌤️ Отримати прогноз погоди (7 днів)
 async def get_weather_forecast(city, user_lang_code='uk'):
     api_lang = WEATHERAPI_LANG_MAP.get(user_lang_code.split('_')[0].lower(), 'en')
 
-    # Використовуємо WEATHER_API_KEY, отриманий зі змінних середовища
     url = f"http://api.weatherapi.com/v1/forecast.json?key={WEATHER_API_KEY}&q={city}&days=7&lang={api_lang}"
 
     async with aiohttp.ClientSession() as session:
@@ -173,19 +196,19 @@ async def get_weather_forecast(city, user_lang_code='uk'):
                 sunset = astro_details["sunset"]
 
                 forecast += (
-                        get_translated_text(user_lang_code, 'date_label', date=date) + "\n" +
-                        get_translated_text(user_lang_code, 'condition_label', condition=condition) + "\n" +
-                        get_translated_text(user_lang_code, 'temperature_label', min_temp=min_temp, max_temp=max_temp,
-                                            avg_temp=avg_temp) + "\n" +
-                        get_translated_text(user_lang_code, 'humidity_label', humidity=humidity) + "\n" +
-                        get_translated_text(user_lang_code, 'wind_label', wind=wind_kph) + "\n" +
-                        get_translated_text(user_lang_code, 'uv_index_label', uv_index=uv_index) + "\n" +
-                        get_translated_text(user_lang_code, 'chance_rain_label',
-                                            chance_rain=daily_chance_of_rain) + "\n" +
-                        get_translated_text(user_lang_code, 'chance_snow_label',
-                                            chance_snow=daily_chance_of_snow) + "\n" +
-                        get_translated_text(user_lang_code, 'sunrise_label', sunrise=sunrise) + "\n" +
-                        get_translated_text(user_lang_code, 'sunset_label', sunset=sunset)
+                    get_translated_text(user_lang_code, 'date_label', date=date) + "\n" +
+                    get_translated_text(user_lang_code, 'condition_label', condition=condition) + "\n" +
+                    get_translated_text(user_lang_code, 'temperature_label', min_temp=min_temp, max_temp=max_temp,
+                                         avg_temp=avg_temp) + "\n" +
+                    get_translated_text(user_lang_code, 'humidity_label', humidity=humidity) + "\n" +
+                    get_translated_text(user_lang_code, 'wind_label', wind=wind_kph) + "\n" +
+                    get_translated_text(user_lang_code, 'uv_index_label', uv_index=uv_index) + "\n" +
+                    get_translated_text(user_lang_code, 'chance_rain_label',
+                                         chance_rain=daily_chance_of_rain) + "\n" +
+                    get_translated_text(user_lang_code, 'chance_snow_label',
+                                         chance_snow=daily_chance_of_snow) + "\n" +
+                    get_translated_text(user_lang_code, 'sunrise_label', sunrise=sunrise) + "\n" +
+                    get_translated_text(user_lang_code, 'sunset_label', sunset=sunset)
                 )
 
                 dates.append(date)
@@ -195,7 +218,64 @@ async def get_weather_forecast(city, user_lang_code='uk'):
             return forecast, (dates, temps, humidities), None
 
 
-# --- Функції графіків --- (без змін)
+# 🌤️ Отримати погодинний прогноз погоди
+async def get_hourly_forecast_data(city, date_str, user_lang_code='uk'):
+    api_lang = WEATHERAPI_LANG_MAP.get(user_lang_code.split('_')[0].lower(), 'en')
+    # WeatherAPI's 'forecast' endpoint provides hourly data for 'days' number of days
+    url = f"http://api.weatherapi.com/v1/forecast.json?key={WEATHER_API_KEY}&q={city}&days=3&lang={api_lang}" # Запит на 3 дні для погодинної
+
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            if response.status != 200:
+                return None, None, get_translated_text(user_lang_code, 'error_data')
+
+            data = await response.json()
+            location_name = data['location']['name']
+            
+            # Знайдемо дані для потрібної дати
+            target_day_data = None
+            for day_data in data["forecast"]["forecastday"]:
+                if day_data["date"] == date_str:
+                    target_day_data = day_data
+                    break
+            
+            if not target_day_data:
+                return None, None, get_translated_text(user_lang_code, 'no_hourly_data')
+
+            hourly_forecasts = []
+            hourly_temps = []
+            hourly_times = []
+
+            for hour_data in target_day_data['hour']:
+                # Parse the full datetime string
+                full_datetime_str = hour_data['time']
+                full_datetime_obj = datetime.strptime(full_datetime_str, '%Y-%m-%d %H:%M')
+                
+                # Only include future or current hours
+                if full_datetime_obj >= datetime.now():
+                    time_only_str = full_datetime_obj.strftime('%H:%M')
+                    temp = hour_data['temp_c']
+                    condition = hour_data['condition']['text']
+                    wind = hour_data['wind_kph']
+                    
+                    hourly_forecasts.append(get_translated_text(user_lang_code, 'hourly_details',
+                                                                time=time_only_str,
+                                                                temp=temp,
+                                                                condition=condition,
+                                                                wind=wind))
+                    hourly_temps.append(temp)
+                    hourly_times.append(time_only_str) # Зберігаємо лише час для графіку
+
+            if not hourly_forecasts:
+                return None, None, get_translated_text(user_lang_code, 'no_hourly_data')
+            
+            forecast_text = get_translated_text(user_lang_code, 'hourly_forecast_for', location_name=location_name) + "\n\n"
+            forecast_text += "\n".join(hourly_forecasts)
+
+            return forecast_text, (hourly_times, hourly_temps), None
+
+
+# --- Функції графіків ---
 def generate_humidity_chart(dates, humidities, user_lang_code='uk'):
     plt.figure(figsize=(8, 4))
     plt.plot(dates, humidities, marker='o', linestyle='-', color='mediumseagreen')
@@ -258,6 +338,35 @@ def generate_temp_chart(dates, temps, user_lang_code='uk'):
     plt.close()
     return buffer
 
+def generate_hourly_temp_chart(times, temps, user_lang_code='uk'):
+    plt.figure(figsize=(10, 5))
+    plt.plot(times, temps, marker='o', linestyle='-', color='purple')
+    plt.title(get_translated_text(user_lang_code, 'hourly_chart_title'))
+    plt.xlabel(get_translated_text(user_lang_code, 'xaxis_title'))
+    plt.ylabel(get_translated_text(user_lang_code, 'temp_legend'))
+    plt.grid(True)
+    
+    # Вибираємо кожну другу/третю годину для міток, щоб уникнути перекриття
+    n = max(1, len(times) // 8) # показуємо приблизно 8 міток
+    plt.xticks(times[::n], rotation=45, ha='right')
+
+    buffer = BytesIO()
+    plt.tight_layout()
+    plt.savefig(buffer, format='png')
+    buffer.seek(0)
+    plt.close()
+    return buffer
+
+# Допоміжна функція для генерації клавіатури стартового меню
+def get_start_keyboard(user_lang_code: str):
+    keyboard = [
+        [InlineKeyboardButton("Київ", callback_data='Київ')],
+        [InlineKeyboardButton("Львів", callback_data='Львів')],
+        [InlineKeyboardButton("Харків", callback_data='Харків')],
+        [InlineKeyboardButton("Одеса", callback_data='Одеса')],
+        [InlineKeyboardButton(get_translated_text(user_lang_code, 'choose_city_button'), callback_data='manual')]
+    ]
+    return InlineKeyboardMarkup(keyboard)
 
 # 🚀 /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -266,14 +375,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Надсилаємо перше привітальне повідомлення з короткою інформацією
     await update.message.reply_text(get_translated_text(user_lang_code, 'initial_welcome'), parse_mode="Markdown")
 
-    keyboard = [
-        [InlineKeyboardButton("Київ", callback_data='Київ')],
-        [InlineKeyboardButton("Львів", callback_data='Львів')],
-        [InlineKeyboardButton("Харків", callback_data='Харків')],
-        [InlineKeyboardButton("Одеса", callback_data='Одеса')],
-        [InlineKeyboardButton(get_translated_text(user_lang_code, 'choose_city_button'), callback_data='manual')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    reply_markup = get_start_keyboard(user_lang_code)
     # Надсилаємо друге повідомлення з запитом обрати місто
     await update.message.reply_text(get_translated_text(user_lang_code, 'greeting_start'), reply_markup=reply_markup)
 
@@ -284,7 +386,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     city = update.message.text.strip()
     await update.message.reply_text(get_translated_text(user_lang_code, 'searching_city', city_name=city),
-                                    parse_mode="Markdown")
+                                     parse_mode="Markdown")
+
+    # Зберігаємо назву міста в `context.user_data` для подальшого використання
+    context.user_data['current_city'] = city
 
     forecast, temp_data, error = await get_weather_forecast(translit(city), user_lang_code)
 
@@ -296,14 +401,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         dates, temps, humidities = temp_data
         chart_image = generate_temp_chart(dates, temps, user_lang_code)
         await update.message.reply_photo(photo=chart_image,
-                                        caption=get_translated_text(user_lang_code, 'chart_temp_caption'))
+                                         caption=get_translated_text(user_lang_code, 'chart_temp_caption'))
         humidity_chart = generate_humidity_chart(dates, humidities, user_lang_code)
         await update.message.reply_photo(photo=humidity_chart,
-                                        caption=get_translated_text(user_lang_code, 'chart_humidity_caption'))
+                                         caption=get_translated_text(user_lang_code, 'chart_humidity_caption'))
         interactive = generate_interactive_chart(dates, temps, humidities, user_lang_code)
         await update.message.reply_document(document=interactive, filename=get_translated_text(user_lang_code,
                                                                                                 'chart_interactive_caption_filename'),
-                                            caption=get_translated_text(user_lang_code, 'chart_interactive_caption'))
+                                             caption=get_translated_text(user_lang_code, 'chart_interactive_caption'))
+
+        # --- ДОДАНО: Кнопка "Погодинна погода" та "Інше місто" ---
+        keyboard = [
+            [InlineKeyboardButton(get_translated_text(user_lang_code, 'hourly_weather_button'), callback_data=f'hourly_weather_{translit(city)}')],
+            [InlineKeyboardButton(get_translated_text(user_lang_code, 'choose_city_button'), callback_data='manual')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(get_translated_text(user_lang_code, 'additional_options_prompt'), reply_markup=reply_markup)
 
 
 async def handle_city_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -312,15 +425,18 @@ async def handle_city_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     user_lang_code = update.effective_user.language_code if update.effective_user else 'uk'
 
-    city = query.data
-    if city == "manual":
+    city_data = query.data
+    if city_data == "manual":
         await query.edit_message_text(get_translated_text(user_lang_code, 'manual_city_prompt'))
         return
 
-    await query.edit_message_text(get_translated_text(user_lang_code, 'getting_forecast_for', city_name=city),
+    # Зберігаємо назву міста в `context.user_data` для подальшого використання
+    context.user_data['current_city'] = city_data
+
+    await query.edit_message_text(get_translated_text(user_lang_code, 'getting_forecast_for', city_name=city_data),
                                   parse_mode="Markdown")
 
-    forecast, temp_data, error = await get_weather_forecast(translit(city), user_lang_code)
+    forecast, temp_data, error = await get_weather_forecast(translit(city_data), user_lang_code)
 
     if error:
         await context.bot.send_message(chat_id=query.message.chat.id, text=error)
@@ -337,8 +453,99 @@ async def handle_city_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
         interactive = generate_interactive_chart(dates, temps, humidities, user_lang_code)
         await context.bot.send_document(chat_id=query.message.chat.id, document=interactive,
                                         filename=get_translated_text(user_lang_code,
-                                                                    'chart_interactive_caption_filename'),
+                                                                      'chart_interactive_caption_filename'),
                                         caption=get_translated_text(user_lang_code, 'chart_interactive_caption'))
+
+        # --- ДОДАНО: Кнопка "Погодинна погода" та "Інше місто" ---
+        keyboard = [
+            [InlineKeyboardButton(get_translated_text(user_lang_code, 'hourly_weather_button'), callback_data=f'hourly_weather_{translit(city_data)}')],
+            [InlineKeyboardButton(get_translated_text(user_lang_code, 'choose_city_button'), callback_data='manual')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await context.bot.send_message(chat_id=query.message.chat.id, text=get_translated_text(user_lang_code, 'additional_options_prompt'), reply_markup=reply_markup)
+
+
+# Обробник для кнопки "Погодинна погода"
+async def handle_hourly_weather_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    user_lang_code = update.effective_user.language_code if update.effective_user else 'uk'
+    
+    # query.data буде виглядати як 'hourly_weather_Kyiv'
+    # Отримуємо назву міста, відкидаючи префікс 'hourly_weather_'
+    city = query.data.replace('hourly_weather_', '')
+    context.user_data['current_city'] = city # Зберігаємо місто для подальшого використання
+
+    # Отримуємо прогноз на 7 днів, щоб дістати доступні дати
+    # Ми вже маємо логіку отримання 7-денного прогнозу, тому використаємо її.
+    
+    _, temp_data, error = await get_weather_forecast(city, user_lang_code)
+
+    if error:
+        await context.bot.send_message(chat_id=query.message.chat.id, text=error)
+        return
+    
+    dates = temp_data[0] # Дати з 7-денного прогнозу
+
+    keyboard = []
+    # Додаємо тільки найближчі 3 дні, для яких WeatherAPI зазвичай надає детальний погодинний прогноз
+    for date in dates[:3]:
+        # Callback data для погодинної погоди буде виглядати 'show_hourly_2025-08-04'
+        keyboard.append([InlineKeyboardButton(date, callback_data=f'show_hourly_{date}')])
+    
+    # Додаємо кнопку повернення до меню міста
+    keyboard.append([InlineKeyboardButton(get_translated_text(user_lang_code, 'hourly_back_to_main_menu'), callback_data='back_to_main_menu')])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(
+        text=get_translated_text(user_lang_code, 'choose_date_hourly'),
+        reply_markup=reply_markup
+    )
+
+# Обробник для вибору дати погодинного прогнозу
+async def handle_hourly_date_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    user_lang_code = update.effective_user.language_code if update.effective_user else 'uk'
+
+    if query.data == 'back_to_main_menu':
+        # Якщо користувач натиснув "Назад до меню міста", повертаємось до початкового меню.
+        await query.edit_message_text(get_translated_text(user_lang_code, 'greeting_start'), reply_markup=get_start_keyboard(user_lang_code))
+        return
+
+    # query.data буде виглядати як 'show_hourly_2025-08-04'
+    date_str = query.data.replace('show_hourly_', '')
+    
+    city = context.user_data.get('current_city')
+    if not city:
+        await query.edit_message_text(get_translated_text(user_lang_code, 'error_data'))
+        return
+
+    await query.edit_message_text(get_translated_text(user_lang_code, 'getting_forecast_for', city_name=city),
+                                  parse_mode="Markdown")
+
+    forecast_text, hourly_data, error = await get_hourly_forecast_data(translit(city), date_str, user_lang_code)
+
+    if error:
+        await context.bot.send_message(chat_id=query.message.chat.id, text=error)
+    else:
+        await context.bot.send_message(chat_id=query.message.chat.id, text=forecast_text, parse_mode="Markdown")
+        
+        # Генеруємо та відправляємо графік погодинної температури
+        times, temps = hourly_data
+        hourly_chart_image = generate_hourly_temp_chart(times, temps, user_lang_code)
+        await context.bot.send_photo(chat_id=query.message.chat.id, photo=hourly_chart_image,
+                                     caption=get_translated_text(user_lang_code, 'hourly_chart_caption'))
+                                     
+    # Після відображення погодинного прогнозу, пропонуємо повернутися до основного меню міста
+    keyboard = [
+        [InlineKeyboardButton(get_translated_text(user_lang_code, 'hourly_weather_button'), callback_data=f'hourly_weather_{translit(city)}')], # Знову кнопка погодинної для цього ж міста
+        [InlineKeyboardButton(get_translated_text(user_lang_code, 'choose_city_button'), callback_data='manual')],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await context.bot.send_message(chat_id=query.message.chat.id, text=get_translated_text(user_lang_code, 'what_next_prompt'), reply_markup=reply_markup)
 
 
 # 🧠 Запуск бота
@@ -352,17 +559,19 @@ if __name__ == '__main__':
         app = ApplicationBuilder().token(BOT_TOKEN).build()
 
         app.add_handler(CommandHandler("start", start))
-        app.add_handler(CallbackQueryHandler(handle_city_button))
+        app.add_handler(CallbackQueryHandler(handle_city_button, pattern='^(Київ|Львів|Харків|Одеса|manual)$'))
+        # ДОДАНО: Обробник для кнопки "Погодинна погода"
+        app.add_handler(CallbackQueryHandler(handle_hourly_weather_button, pattern='^hourly_weather_.*$'))
+        # ДОДАНО: Обробник для вибору дати погодинного прогнозу та повернення
+        app.add_handler(CallbackQueryHandler(handle_hourly_date_selection, pattern='^show_hourly_.*$|^back_to_main_menu$'))
+
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-        # ЗМІНЕНО: Замість app.run_polling() використовуємо app.run_webhook()
-        # Цей метод запустить локальний веб-сервер, який буде приймати HTTP-запити від Telegram.
-        # Telegram Bot API автоматично встановить webhook, якщо його ще немає.
         print(f"✅ Бот налаштований на Webhooks. Слухаю на порту {PORT}, шлях /telegram.")
 
         app.run_webhook(
-            listen="0.0.0.0",     # Слухати на всіх доступних інтерфейсах
-            port=PORT,            # Використовувати порт, наданий Render.com (через змінну середовища $PORT)
-            url_path="/telegram", # Шлях на вашому сервері, куди Telegram надсилатиме оновлення
+            listen="0.0.0.0",      # Слухати на всіх доступних інтерфейсах
+            port=PORT,             # Використовувати порт, наданий Render.com (через змінну середовища $PORT)
+            url_path="/telegram",  # Шлях на вашому сервері, куди Telegram надсилатиме оновлення
             webhook_url=f"{WEBHOOK_URL}/telegram" # Повний URL для встановлення вебхуку на Telegram
         )
